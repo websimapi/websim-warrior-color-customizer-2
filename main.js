@@ -27,6 +27,15 @@ const fragmentShader = `
 
     uniform bool uCleanPixels;
 
+    // Lighting uniforms
+    uniform bool uEnableLighting;
+    uniform vec3 uLightColor;
+    uniform float uLightIntensity;
+    uniform vec2 uLightDir;
+    uniform vec3 uRimColor;
+    uniform float uRimIntensity;
+    uniform float uRimPower;
+
     // Palette based on the new source image
     const vec3 PALETTE_FACE    = vec3(1.0, 1.0, 0.0); // Yellow
     const vec3 PALETTE_ARMOUR  = vec3(0.0, 0.0, 1.0); // Blue
@@ -218,6 +227,33 @@ const fragmentShader = `
             if (min_dist < uThresholdOutline) finalColor = uColorOutline;
         }
 
+        // --- HD Lighting ---
+        if (uEnableLighting && texColor.a > 0.5) {
+            // 1. Calculate Normal from surrounding alpha values (depth map)
+            float alpha_l = getAlpha(vUv - vec2(onePixel.x, 0.0));
+            float alpha_r = getAlpha(vUv + vec2(onePixel.x, 0.0));
+            float alpha_b = getAlpha(vUv - vec2(0.0, onePixel.y));
+            float alpha_t = getAlpha(vUv + vec2(0.0, onePixel.y));
+            
+            vec3 normal = normalize(vec3(alpha_l - alpha_r, alpha_b - alpha_t, 0.2));
+
+            // 2. Calculate Diffuse Light
+            vec3 lightDir = normalize(vec3(uLightDir.xy, 0.5));
+            float diffuse = max(0.0, dot(normal, lightDir));
+            
+            // 3. Calculate Rim Light
+            vec3 viewDir = vec3(0.0, 0.0, 1.0);
+            float rimDot = 1.0 - max(0.0, dot(normal, viewDir));
+            float rim = pow(rimDot, uRimPower);
+
+            // 4. Apply Lighting
+            float ambient = 1.0 - uLightIntensity;
+            vec3 diffuseLighting = diffuse * uLightColor * uLightIntensity;
+            vec3 rimLighting = rim * uRimColor * uRimIntensity;
+            
+            finalColor = finalColor * (ambient + diffuseLighting) + rimLighting;
+        }
+
         gl_FragColor = vec4(finalColor, texColor.a);
     }
 `;
@@ -257,6 +293,14 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uThresholdHair: { value: 1.0 },
         uThresholdOutline: { value: 1.0 },
         uCleanPixels: { value: true },
+        // Lighting uniforms
+        uEnableLighting: { value: true },
+        uLightColor: { value: new THREE.Color('#FFFFFF') },
+        uLightIntensity: { value: 0.5 },
+        uLightDir: { value: new THREE.Vector2(-0.5, 0.5) },
+        uRimColor: { value: new THREE.Color('#87CEEB') },
+        uRimIntensity: { value: 1.5 },
+        uRimPower: { value: 2.0 },
     },
     vertexShader,
     fragmentShader,
@@ -319,6 +363,53 @@ for (const [id, uniformName] of Object.entries(thresholdMappings)) {
         if (valueSpan) {
             valueSpan.textContent = threshold.toFixed(2);
         }
+    });
+}
+
+// Connect new lighting controls
+const lightingToggle = document.getElementById('lighting-toggle');
+lightingToggle.addEventListener('change', (event) => {
+    shaderMaterial.uniforms.uEnableLighting.value = event.target.checked;
+});
+
+const lightColorInput = document.getElementById('light-color');
+lightColorInput.addEventListener('input', (event) => {
+    shaderMaterial.uniforms.uLightColor.value.set(event.target.value);
+});
+
+const rimColorInput = document.getElementById('rim-color');
+rimColorInput.addEventListener('input', (event) => {
+    shaderMaterial.uniforms.uRimColor.value.set(event.target.value);
+});
+
+const lightDirXSlider = document.getElementById('light-dir-x');
+const lightDirYSlider = document.getElementById('light-dir-y');
+const lightDirXValue = document.getElementById('light-dir-x-value');
+const lightDirYValue = document.getElementById('light-dir-y-value');
+
+function updateLightDir() {
+    const x = parseFloat(lightDirXSlider.value);
+    const y = parseFloat(lightDirYSlider.value);
+    shaderMaterial.uniforms.uLightDir.value.set(x, y);
+    lightDirXValue.textContent = x.toFixed(2);
+    lightDirYValue.textContent = y.toFixed(2);
+}
+lightDirXSlider.addEventListener('input', updateLightDir);
+lightDirYSlider.addEventListener('input', updateLightDir);
+
+const simpleSliderMappings = {
+    'light-intensity': { uniform: 'uLightIntensity', fixed: 2 },
+    'rim-intensity': { uniform: 'uRimIntensity', fixed: 2 },
+    'rim-power': { uniform: 'uRimPower', fixed: 1 },
+};
+
+for (const [id, data] of Object.entries(simpleSliderMappings)) {
+    const slider = document.getElementById(id);
+    const valueSpan = document.getElementById(`${id}-value`);
+    slider.addEventListener('input', (event) => {
+        const value = parseFloat(event.target.value);
+        shaderMaterial.uniforms[data.uniform].value = value;
+        valueSpan.textContent = value.toFixed(data.fixed);
     });
 }
 
